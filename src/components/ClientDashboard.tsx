@@ -10,6 +10,8 @@ import {
   Filter,
   ShieldAlert,
   Wallet,
+  AlertTriangle,
+  ShieldCheck,
 } from 'lucide-react';
 import { ethers } from 'ethers';
 import { PaymentRecord } from '../types/payment';
@@ -28,6 +30,7 @@ interface ClientDashboardProps {
   }) => Promise<void>;
   onOpenFundModal: (payment: PaymentRecord) => void;
   onOpenSplitModal: (payment: PaymentRecord) => void;
+  onToggleDispute: (paymentId: string, currentlyDisputed: boolean) => Promise<void>;
   onOpenNftModal: (payment: PaymentRecord) => void;
   onSelectPaymentForOrbit: (paymentId: string) => void;
 }
@@ -38,17 +41,18 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   onCreatePayment,
   onOpenFundModal,
   onOpenSplitModal,
+  onToggleDispute,
   onOpenNftModal,
   onSelectPaymentForOrbit,
 }) => {
   const [beneficiary, setBeneficiary] = useState<string>(
     '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
   );
-  const [amountEth, setAmountEth] = useState<string>('1.25');
+  const [amountEth, setAmountEth] = useState<string>('1.0');
   const [dueDays, setDueDays] = useState<string>('7');
   const [customDateTime, setCustomDateTime] = useState<string>('');
   const [agreementCID, setAgreementCID] = useState<string>('');
-  const [fundImmediately, setFundImmediately] = useState<boolean>(true);
+  const [fundImmediately, setFundImmediately] = useState<boolean>(false);
   const [onlyMyDebts, setOnlyMyDebts] = useState<boolean>(false);
   const [creating, setCreating] = useState<boolean>(false);
 
@@ -57,9 +61,9 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
     return p.debtor.toLowerCase() === account.toLowerCase();
   });
 
-  const activeEscrowTotal = visiblePayments
+  const activeCommittedTotal = visiblePayments
     .filter((p) => !p.claimed)
-    .reduce((acc, item) => acc + (parseFloat(item.payedEth) || 0), 0);
+    .reduce((acc, item) => acc + (parseFloat(item.amountEth) || 0), 0);
 
   const pendingDeliverableReviews = visiblePayments.filter(
     (p) => !p.claimed && !p.approved && Boolean(p.deliverableCID)
@@ -96,17 +100,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* KPIs Financieros del Cliente (Debtor) */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-4">
           <span className="text-xs font-medium text-slate-400">
-            Total Fondeado en Escrow
+            Total Comprometido Activo
           </span>
           <div className="mt-1.5 flex items-baseline gap-2">
             <span className="font-mono text-2xl font-bold text-white">
-              {activeEscrowTotal.toFixed(2)} ETH
+              {activeCommittedTotal.toFixed(2)} ETH
             </span>
-            <span className="text-xs text-emerald-400">Depositado vía pay()</span>
+            <span className="text-xs text-emerald-400">En tokens ERC-721</span>
           </div>
         </div>
 
@@ -135,13 +138,13 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
         </div>
       </div>
 
-      {/* Formulario de Creación de Pago en Escrow (createPayment + pay) */}
+      {/* Formulario de Creación de Pago en Escrow (createPayment) */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg">
         <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3.5">
           <div>
             <h2 className="flex items-center gap-2 text-base font-bold text-white">
               <PlusCircle className="h-4 w-4 text-emerald-400" />
-              <span>Crear Pago Asegurado en Escrow (createPayment)</span>
+              <span>Crear Pago Diferido con Acuerdo en IPFS (createPayment)</span>
             </h2>
             <p className="text-xs text-slate-400">
               Acuña un token ERC-721 vinculando el acuerdo de servicio en IPFS Kubo (`agreementCID`).
@@ -229,8 +232,10 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
               />
               <span>
-                Fondear inmediatamente al crear ejecutando{' '}
-                <code className="font-mono text-emerald-400">pay(paymentId)</code>
+                Fondear el 100% al crear con <code className="font-mono text-emerald-400">pay()</code>{' '}
+                <span className="text-slate-400">
+                  (Desmarcar si vas a pagar por hitos con <code className="font-mono">splitAndApproveMilestone</code>)
+                </span>
               </span>
             </label>
 
@@ -244,8 +249,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 {creating
                   ? 'Procesando en Blockchain...'
                   : fundImmediately
-                  ? `Crear y Fondear Escrow (${amountEth || '0'} ETH)`
-                  : `Crear Compromiso Diferido (${amountEth || '0'} ETH)`}
+                  ? `Crear y Fondear (${amountEth || '0'} ETH)`
+                  : `Crear Pago por Hitos (${amountEth || '0'} ETH)`}
               </span>
             </button>
           </div>
@@ -257,12 +262,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200">
-              Panel de Control de Pagos y Auditoría de Entregables
+              Panel de Control de Pagos, Auditoría de Hitos y Disputas
             </h3>
             <p className="text-xs text-slate-400">
-              Fondea pagos diferidos con <code className="font-mono text-emerald-400">pay()</code>, revisa el{' '}
-              <code className="font-mono text-sky-400">deliverableCID</code> en el Gateway local y ejecuta{' '}
-              <code className="font-mono text-emerald-400">splitAndApproveMilestone</code>.
+              Audita el <code className="font-mono text-sky-400">deliverableCID</code> en el Gateway local y ejecuta{' '}
+              <code className="font-mono text-emerald-400">splitAndApproveMilestone</code> o gestiona disputas con{' '}
+              <code className="font-mono text-rose-400">disputePayment</code>.
             </p>
           </div>
 
@@ -290,7 +295,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             return (
               <div
                 key={payment.id}
-                className="rounded-2xl border border-slate-800/90 bg-slate-900/75 p-5 transition hover:border-slate-700"
+                className={`rounded-2xl border p-5 transition ${
+                  payment.disputed
+                    ? 'border-rose-500/40 bg-rose-950/15'
+                    : 'border-slate-800/90 bg-slate-900/75 hover:border-slate-700'
+                }`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800/80 pb-3.5">
                   <div className="flex items-center gap-3">
@@ -309,7 +318,12 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         </span>
                         {payment.parentPaymentId && (
                           <span className="rounded bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
-                            Sub-pago de #{payment.parentPaymentId}
+                            Sub-pago de #{payment.parentPaymentId.slice(0, 6)}
+                          </span>
+                        )}
+                        {payment.disputed && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/20 px-2.5 py-0.5 text-[11px] font-bold text-rose-300">
+                            <AlertTriangle className="h-3 w-3" /> En Disputa (Congelado)
                           </span>
                         )}
                         {payment.claimed ? (
@@ -347,7 +361,6 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* Tarjeta de Revisión de Acuerdos y Entregables en IPFS */}
                 <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3">
                     <div className="flex items-center justify-between text-xs">
@@ -400,7 +413,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* Acciones del Cliente: Fondear (pay) + Aprobar Hito y Dividir + Ver Token ERC721 */}
+                {/* Acciones del Cliente: Fondear (pay) + Disputar/Resolver + Aprobar Hito y Dividir */}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-1">
                   <div className="flex items-center gap-2">
                     <button
@@ -433,7 +446,31 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                       </button>
                     )}
 
-                    {!payment.claimed && !payment.approved && (
+                    {!payment.claimed && isFullyFunded && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleDispute(payment.id, payment.disputed)}
+                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-bold transition ${
+                          payment.disputed
+                            ? 'border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                            : 'border-rose-500/40 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25'
+                        }`}
+                      >
+                        {payment.disputed ? (
+                          <>
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            <span>Levantar Disputa (undisputePayment)</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            <span>Disputar Pago (disputePayment)</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    {!payment.claimed && !payment.approved && !payment.disputed && (
                       <button
                         type="button"
                         onClick={() => onOpenSplitModal(payment)}

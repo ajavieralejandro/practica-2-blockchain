@@ -17,6 +17,7 @@ export interface PaymentRecord {
   payedEth: string;
   dueTime: number; // Unix timestamp in seconds
   approved: boolean;
+  disputed: boolean;
   claimed: boolean;
   agreementCID: string;
   deliverableCID: string;

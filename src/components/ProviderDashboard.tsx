@@ -10,6 +10,7 @@ import {
   Send,
   Sparkles,
   Flame,
+  AlertTriangle,
 } from 'lucide-react';
 import { ethers } from 'ethers';
 import { PaymentRecord } from '../types/payment';
@@ -47,12 +48,13 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
   });
 
   const isClaimEligible = (p: PaymentRecord) => {
-    if (p.claimed) return false;
+    if (p.claimed || p.disputed) return false;
     const isFullyPaid = ethers.BigNumber.from(p.payedWei).gte(
       ethers.BigNumber.from(p.amountWei)
     );
     const isMatured = p.dueTime * 1000 <= Date.now();
-    // Regla del Plan (Component 1): (approved == true) OR (dueTime <= block.timestamp && bytes(deliverableCID).length > 0) cuando está fondeado
+    // Exact logic from BC-Practica2/src/DelayedPayment.sol (lines 242-250):
+    // payed == amount && !disputed && (approved || (dueTime <= block.timestamp && bytes(deliverableCID).length > 0))
     return isFullyPaid && (p.approved || (isMatured && Boolean(p.deliverableCID)));
   };
 
@@ -72,7 +74,6 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Resumen de Pagos Asignados al Proveedor */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-4">
           <span className="text-xs font-medium text-slate-400">
@@ -111,7 +112,6 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
         </div>
       </div>
 
-      {/* Cabecera de sección */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-base font-bold text-white">
@@ -140,7 +140,6 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
         </button>
       </div>
 
-      {/* Tarjetas de pagos asignados al Proveedor */}
       <div className="space-y-4">
         {visiblePayments.map((payment) => {
           const isMatured = payment.dueTime * 1000 <= Date.now();
@@ -148,14 +147,24 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
             ethers.BigNumber.from(payment.amountWei)
           );
           const canClaim = isClaimEligible(payment);
-          const canSlash = !payment.claimed && isMatured && !isFullyPaid;
+          // En BC-Practica2/src/DelayedPayment.sol (líneas 270-288): slashPayer requiere vencido, impago, no disputado y con deliverableCID != ""
+          const canSlash =
+            !payment.claimed &&
+            isMatured &&
+            !isFullyPaid &&
+            !payment.disputed &&
+            Boolean(payment.deliverableCID);
           const isPortalOpen = expandedPortalId === payment.id;
           const currentDraftCid = draftCids[payment.id] ?? payment.deliverableCID ?? '';
 
           return (
             <div
               key={payment.id}
-              className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-md transition hover:border-slate-700"
+              className={`rounded-2xl border p-5 shadow-md transition ${
+                payment.disputed
+                  ? 'border-rose-500/40 bg-rose-950/15'
+                  : 'border-slate-800 bg-slate-900/80 hover:border-slate-700'
+              }`}
             >
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4">
                 <div className="flex items-center gap-3">
@@ -172,6 +181,11 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
                       <span className="font-mono text-sm font-bold text-white">
                         Pago {payment.shortId}
                       </span>
+                      {payment.disputed && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/20 px-2.5 py-0.5 text-[11px] font-bold text-rose-300">
+                          <AlertTriangle className="h-3 w-3" /> En Disputa (Claim Bloqueado)
+                        </span>
+                      )}
                       {payment.claimed ? (
                         <span className="rounded-full bg-slate-800 px-2.5 py-0.5 text-[11px] font-semibold text-slate-400">
                           Fondos Reclamados (Claimed)
@@ -203,7 +217,6 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Estado de CIDs en IPFS */}
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs">
                   <div className="flex items-center justify-between">
@@ -244,7 +257,6 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Portal desplegable para subir entregable a IPFS y ejecutar submitDeliverable */}
               {!payment.claimed && isPortalOpen && (
                 <div className="mt-4 rounded-xl border border-sky-500/30 bg-slate-950/80 p-4">
                   <IPFSManager
@@ -271,7 +283,6 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
                 </div>
               )}
 
-              {/* Barra de acciones del Proveedor */}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-1">
                 <div className="flex items-center gap-2">
                   {!payment.claimed && (
@@ -306,7 +317,7 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
                       type="button"
                       onClick={() => onSlashPayer(payment.id)}
                       className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/25"
-                      title="Penalizar deudor por vencimiento impago (slashPayer)"
+                      title="Penalizar deudor por vencimiento impago tras haber entregado el hito (slashPayer)"
                     >
                       <Flame className="h-3.5 w-3.5" />
                       <span>Slash Debtor</span>
@@ -326,7 +337,7 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
                       title={
                         canClaim
                           ? 'Ejecutar claim(uint256 _paymentId) y transferir ETH a tu wallet'
-                          : 'Requiere fondeo 100% y (approved == true || (dueTime <= block.timestamp && deliverableCID != ""))'
+                          : 'Requiere payed == amount, !disputed y (approved == true || (dueTime <= block.timestamp && deliverableCID != ""))'
                       }
                     >
                       <Coins className="h-4 w-4" />

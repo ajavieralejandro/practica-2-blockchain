@@ -10,7 +10,7 @@ declare global {
   }
 }
 
-const STORAGE_PAYMENTS_KEY = 'delayed_payment_cached_records_v2';
+const STORAGE_PAYMENTS_KEY = 'delayed_payment_cached_records_v3';
 const STORAGE_CONTRACT_ADDR_KEY = 'delayed_payment_contract_address';
 
 function formatShortId(id: string): string {
@@ -59,32 +59,35 @@ export function useDelayedPayment() {
         shortId: '#1001',
         debtor: activeAddr,
         beneficiary: providerAddr,
-        amountWei: ethers.utils.parseEther('1.5').toString(),
-        amountEth: '1.5',
-        payedWei: ethers.utils.parseEther('1.5').toString(),
-        payedEth: '1.5',
+        amountWei: ethers.utils.parseEther('1.0').toString(),
+        amountEth: '1.0',
+        payedWei: '0',
+        payedEth: '0.0',
         dueTime: nowSec + 86400 * 7,
         approved: false,
+        disputed: false,
         claimed: false,
-        agreementCID: 'QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco',
-        deliverableCID: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
-        tokenURI: 'ipfs://QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco',
+        agreementCID: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+        deliverableCID: 'bafybeif255okcs4772x4nffomz6iypa5ptps7zfcg6r4xovuhuxgq2m2ey',
+        tokenURI: 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
       },
       {
         id: '1002',
         shortId: '#1002',
         debtor: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
         beneficiary: activeAddr,
-        amountWei: ethers.utils.parseEther('0.85').toString(),
-        amountEth: '0.85',
-        payedWei: ethers.utils.parseEther('0.85').toString(),
-        payedEth: '0.85',
+        amountWei: ethers.utils.parseEther('0.4').toString(),
+        amountEth: '0.4',
+        payedWei: ethers.utils.parseEther('0.4').toString(),
+        payedEth: '0.4',
         dueTime: nowSec + 86400 * 3,
         approved: true,
+        disputed: false,
         claimed: false,
-        agreementCID: 'QmT5NvUtoM5nWFfrQdVrFtvGfKFmG7AHE8P34isapyhCxX',
-        deliverableCID: 'QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx',
-        tokenURI: 'ipfs://QmT5NvUtoM5nWFfrQdVrFtvGfKFmG7AHE8P34isapyhCxX',
+        agreementCID: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+        deliverableCID: 'bafybeif255okcs4772x4nffomz6iypa5ptps7zfcg6r4xovuhuxgq2m2ey',
+        tokenURI: 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+        parentPaymentId: '1001',
       },
     ];
     localStorage.setItem(STORAGE_PAYMENTS_KEY, JSON.stringify(seed));
@@ -97,9 +100,8 @@ export function useDelayedPayment() {
   };
 
   /**
-   * Lee todos los pagos desde el Smart Contract DelayedPayment usando ethers.js v5.7.0
-   * Reconstruye los IDs a partir de los eventos NewPayment y SplitPayment / MilestoneApproved
-   * y lee el struct Payment(beneficiary, amount, payed, dueTime, agreementCID, deliverableCID, approved)
+   * Lee todos los pagos desde el Smart Contract DelayPayment (BC-Practica2/src/DelayedPayment.sol)
+   * usando ethers.js v5.7.0
    */
   const fetchPaymentsFromChain = useCallback(
     async (userAddr?: string) => {
@@ -125,9 +127,9 @@ export function useDelayedPayment() {
         setIsContractDeployed(true);
         const contract = new ethers.Contract(contractAddress, DELAYED_PAYMENT_ABI, provider);
 
-        // Recolectar todos los tokenIds emitidos en NewPayment, SplitPayment y MilestoneApproved
         const idMap = new Map<string, ethers.BigNumber>();
         const debtorByEvent = new Map<string, string>();
+        const parentByChild = new Map<string, string>();
 
         try {
           const newPaymentLogs = await contract.queryFilter(
@@ -148,33 +150,17 @@ export function useDelayedPayment() {
         }
 
         try {
-          const splitLogs = await contract.queryFilter(
-            contract.filters.SplitPayment(),
-            0,
-            'latest'
-          );
-          for (const log of splitLogs) {
-            const splitIdBn: ethers.BigNumber | undefined = log.args?._splittedId;
-            const debtorAddr: string | undefined = log.args?._debtor;
-            if (splitIdBn) {
-              idMap.set(splitIdBn.toString(), splitIdBn);
-              if (debtorAddr) debtorByEvent.set(splitIdBn.toString(), debtorAddr);
-            }
-          }
-        } catch {
-          // continuar
-        }
-
-        try {
           const milestoneLogs = await contract.queryFilter(
             contract.filters.MilestoneApproved(),
             0,
             'latest'
           );
           for (const log of milestoneLogs) {
+            const origBn: ethers.BigNumber | undefined = log.args?.originalPaymentId;
             const mIdBn: ethers.BigNumber | undefined = log.args?.milestonePaymentId;
             if (mIdBn) {
               idMap.set(mIdBn.toString(), mIdBn);
+              if (origBn) parentByChild.set(mIdBn.toString(), origBn.toString());
             }
           }
         } catch {
@@ -212,10 +198,12 @@ export function useDelayedPayment() {
               payedEth: ethers.utils.formatEther(p.payed),
               dueTime: Number(p.dueTime),
               approved: Boolean(p.approved),
+              disputed: Boolean(p.disputed),
               claimed: isBurned,
               agreementCID,
               deliverableCID,
               tokenURI: tokenUri || `ipfs://${agreementCID}`,
+              parentPaymentId: parentByChild.get(idStr),
             });
           } catch (itemErr) {
             console.warn('Error leyendo pago individual:', idStr, itemErr);
@@ -333,7 +321,6 @@ export function useDelayedPayment() {
 
   /**
    * 1. createPayment(uint256 _dueTime, uint256 _amount, address _beneficiary, string calldata _agreementCID)
-   *    con opción de fondear inmediatamente mediante pay(id) si fundImmediately === true.
    */
   const createPayment = async (params: {
     dueTime: number;
@@ -343,7 +330,7 @@ export function useDelayedPayment() {
     fundImmediately?: boolean;
   }) => {
     setError(null);
-    const shouldFund = params.fundImmediately ?? true;
+    const shouldFund = params.fundImmediately ?? false;
     setTxPending(
       shouldFund
         ? 'Acuñando pago ERC-721 (createPayment) y depositando fondos en Escrow (pay)...'
@@ -369,13 +356,11 @@ export function useDelayedPayment() {
         setLastTxHash(tx.hash);
         const receipt = await tx.wait();
 
-        // Extraer el _id del evento NewPayment
         const newPaymentEvt = receipt.events?.find((e: any) => e.event === 'NewPayment');
         if (newPaymentEvt?.args?._id) {
           createdId = newPaymentEvt.args._id.toString();
         }
 
-        // Si el usuario eligió fondear de inmediato, llamamos a pay(_id) con { value: amountWei }
         if (shouldFund && newPaymentEvt?.args?._id) {
           setTxPending(`Fondeando pago #${createdId.slice(0, 6)} mediante pay()...`);
           const payTx = await contract.pay(newPaymentEvt.args._id, { value: amountWei });
@@ -397,6 +382,7 @@ export function useDelayedPayment() {
           payedEth: shouldFund ? params.amountEth : '0.0',
           dueTime: params.dueTime,
           approved: false,
+          disputed: false,
           claimed: false,
           agreementCID: params.agreementCID,
           deliverableCID: '',
@@ -411,7 +397,7 @@ export function useDelayedPayment() {
         author: account || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
         role: 'client',
         message: `Pago diferido creado (${params.amountEth} ETH) con acuerdo en IPFS (${
-          shouldFund ? 'Fondeado 100%' : 'Pendiente de fondeo vía pay()'
+          shouldFund ? 'Fondeado vía pay()' : 'Listo para fondear por hitos en splitAndApproveMilestone'
         }).`,
         cidAttachment: params.agreementCID,
       });
@@ -424,7 +410,7 @@ export function useDelayedPayment() {
   };
 
   /**
-   * 1b. pay(uint256 _paymentId) payable (Funding Modal)
+   * 1b. pay(uint256 _paymentId) payable
    */
   const fundPayment = async (paymentId: string, amountEth: string) => {
     setError(null);
@@ -460,7 +446,7 @@ export function useDelayedPayment() {
         type: 'PROGRESS_UPDATE',
         author: account || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
         role: 'client',
-        message: `Fondeo adicional ejecutado en el contrato mediante pay(): +${amountEth} ETH.`,
+        message: `Fondeo ejecutado en el contrato mediante pay(): +${amountEth} ETH.`,
       });
     } catch (err: any) {
       setError(err?.reason || err?.message || 'Error al ejecutar pay(paymentId)');
@@ -516,7 +502,8 @@ export function useDelayedPayment() {
   };
 
   /**
-   * 3. splitAndApproveMilestone(uint256 _paymentId, uint256 _amount, string calldata _deliverableCID)
+   * 3. splitAndApproveMilestone(uint256 _paymentId) external payable
+   *    (En BC-Practica2/src/DelayedPayment.sol recibe 1 parámetro _paymentId y msg.value es el monto del hito)
    */
   const splitAndApproveMilestone = async (
     paymentId: string,
@@ -524,7 +511,7 @@ export function useDelayedPayment() {
     deliverableCID: string
   ) => {
     setError(null);
-    setTxPending(`Ejecutando splitAndApproveMilestone (${splitAmountEth} ETH)...`);
+    setTxPending(`Ejecutando splitAndApproveMilestone{value: ${splitAmountEth} ETH}(#${paymentId.slice(0, 6)})...`);
 
     try {
       const splitWei = ethers.utils.parseEther(splitAmountEth);
@@ -534,7 +521,7 @@ export function useDelayedPayment() {
         const signer = provider.getSigner();
         const contract = new ethers.Contract(contractAddress, DELAYED_PAYMENT_ABI, signer);
 
-        const tx = await contract.splitAndApproveMilestone(paymentId, splitWei, deliverableCID);
+        const tx = await contract.splitAndApproveMilestone(paymentId, { value: splitWei });
         setLastTxHash(tx.hash);
         await tx.wait();
         await fetchPaymentsFromChain(account);
@@ -547,56 +534,40 @@ export function useDelayedPayment() {
           throw new Error('El monto a dividir excede el saldo del pago principal o es inválido.');
         }
 
-        if (splitWei.eq(currentWei)) {
-          const updated = payments.map((p) =>
-            p.id === paymentId
-              ? {
-                  ...p,
-                  approved: true,
-                  deliverableCID: deliverableCID || p.deliverableCID,
-                }
-              : p
-          );
-          saveLocalPayments(updated);
-        } else {
-          const remainingWei = currentWei.sub(splitWei);
-          const remainingEth = ethers.utils.formatEther(remainingWei);
-          const currentPayedWei = ethers.BigNumber.from(target.payedWei);
-          const childPayedWei = currentPayedWei.gte(splitWei) ? splitWei : currentPayedWei;
-          const remainingPayedWei = currentPayedWei.sub(childPayedWei);
-          const newSubId = `${paymentId}-${Math.floor(10 + Math.random() * 89)}`;
+        const remainingWei = currentWei.sub(splitWei);
+        const remainingEth = ethers.utils.formatEther(remainingWei);
+        const newSubId = `${paymentId}-${Math.floor(10 + Math.random() * 89)}`;
 
-          const splittedToken: PaymentRecord = {
-            id: newSubId,
-            shortId: `#${newSubId}`,
-            beneficiary: target.beneficiary,
-            debtor: target.debtor,
-            amountWei: splitWei.toString(),
-            amountEth: splitAmountEth,
-            payedWei: childPayedWei.toString(),
-            payedEth: ethers.utils.formatEther(childPayedWei),
-            dueTime: target.dueTime,
-            approved: true,
-            claimed: false,
-            agreementCID: target.agreementCID,
-            deliverableCID: deliverableCID || target.deliverableCID,
-            tokenURI: `ipfs://${target.agreementCID}`,
-            parentPaymentId: target.id,
-          };
+        const splittedToken: PaymentRecord = {
+          id: newSubId,
+          shortId: `#${newSubId}`,
+          beneficiary: target.beneficiary,
+          debtor: target.debtor,
+          amountWei: splitWei.toString(),
+          amountEth: splitAmountEth,
+          payedWei: splitWei.toString(),
+          payedEth: splitAmountEth,
+          dueTime: target.dueTime,
+          approved: true,
+          disputed: false,
+          claimed: false,
+          agreementCID: target.agreementCID,
+          deliverableCID: deliverableCID || target.deliverableCID,
+          tokenURI: `ipfs://${target.agreementCID}`,
+          parentPaymentId: target.id,
+        };
 
-          const updated = payments.map((p) =>
-            p.id === paymentId
-              ? {
-                  ...p,
-                  amountWei: remainingWei.toString(),
-                  amountEth: remainingEth,
-                  payedWei: remainingPayedWei.toString(),
-                  payedEth: ethers.utils.formatEther(remainingPayedWei),
-                }
-              : p
-          );
-          saveLocalPayments([splittedToken, ...updated]);
-        }
+        const updated = payments.map((p) =>
+          p.id === paymentId
+            ? {
+                ...p,
+                amountWei: remainingWei.toString(),
+                amountEth: remainingEth,
+                deliverableCID: '',
+              }
+            : p
+        );
+        saveLocalPayments([splittedToken, ...updated]);
       }
 
       await orbitService.addEvent({
@@ -604,7 +575,7 @@ export function useDelayedPayment() {
         type: 'PROGRESS_UPDATE',
         author: account || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
         role: 'client',
-        message: `Hito aprobado y dividido por ${splitAmountEth} ETH (splitAndApproveMilestone). Sub-pago habilitado para claim inmediato.`,
+        message: `Hito aprobado y fondeado por ${splitAmountEth} ETH mediante splitAndApproveMilestone{value}. Nuevo token hijo listo para claim.`,
         cidAttachment: deliverableCID,
       });
     } catch (err: any) {
@@ -653,7 +624,54 @@ export function useDelayedPayment() {
   };
 
   /**
-   * 5. slashPayer(uint256 _paymentId) - Compatibilidad con Práctica 1 cuando vence impago
+   * 5. disputePayment(uint256 _paymentId) & undisputePayment(uint256 _paymentId)
+   */
+  const toggleDisputePayment = async (paymentId: string, currentlyDisputed: boolean) => {
+    setError(null);
+    setTxPending(
+      currentlyDisputed
+        ? `Levantando disputa del pago #${paymentId.slice(0, 6)} (undisputePayment)...`
+        : `Congelando pago en disputa #${paymentId.slice(0, 6)} (disputePayment)...`
+    );
+
+    try {
+      if (window.ethereum && isContractDeployed) {
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        const signer = provider.getSigner();
+        const contract = new ethers.Contract(contractAddress, DELAYED_PAYMENT_ABI, signer);
+
+        const tx = currentlyDisputed
+          ? await contract.undisputePayment(paymentId)
+          : await contract.disputePayment(paymentId);
+        setLastTxHash(tx.hash);
+        await tx.wait();
+        await fetchPaymentsFromChain(account);
+      } else {
+        const updated = payments.map((p) =>
+          p.id === paymentId ? { ...p, disputed: !currentlyDisputed } : p
+        );
+        saveLocalPayments(updated);
+      }
+
+      await orbitService.addEvent({
+        paymentId,
+        type: 'DISPUTE_NOTE',
+        author: account || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+        role: 'client',
+        message: currentlyDisputed
+          ? `Disputa resuelta por el cliente mediante undisputePayment(#${paymentId}).`
+          : `Pago marcado en disputa mediante disputePayment(#${paymentId}). Reclamo bloqueado hasta resolución.`,
+      });
+    } catch (err: any) {
+      setError(err?.reason || err?.message || 'Error al cambiar estado de disputa');
+      throw err;
+    } finally {
+      setTxPending(null);
+    }
+  };
+
+  /**
+   * 6. slashPayer(uint256 _paymentId)
    */
   const slashPayer = async (paymentId: string) => {
     setError(null);
@@ -673,7 +691,7 @@ export function useDelayedPayment() {
         type: 'DISPUTE_NOTE',
         author: account || '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
         role: 'provider',
-        message: `Deudor penalizado mediante slashPayer(#${paymentId}) por vencimiento sin fondeo completo.`,
+        message: `Deudor penalizado mediante slashPayer(#${paymentId}) por vencimiento con entregable presentado pero impago.`,
       });
     } catch (err: any) {
       setError(err?.reason || err?.message || 'Error al ejecutar slashPayer');
@@ -705,6 +723,7 @@ export function useDelayedPayment() {
     submitDeliverable,
     splitAndApproveMilestone,
     claimPayment,
+    toggleDisputePayment,
     slashPayer,
   };
 }

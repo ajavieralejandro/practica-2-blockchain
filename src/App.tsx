@@ -31,6 +31,7 @@ export function App() {
     submitDeliverable,
     splitAndApproveMilestone,
     claimPayment,
+    toggleDisputePayment,
     slashPayer,
   } = useDelayedPayment();
 
@@ -41,7 +42,6 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Barra de Navegación Superior con Rol Adaptativo */}
       <Navbar
         account={account}
         networkName={networkName}
@@ -54,7 +54,6 @@ export function App() {
         onRefresh={refreshPayments}
       />
 
-      {/* Banners de estado de transacción y errores */}
       <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 space-y-2">
         {txPending && (
           <div className="flex items-center gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs font-medium text-emerald-200">
@@ -88,7 +87,6 @@ export function App() {
         )}
       </div>
 
-      {/* Layout Principal B2B: Panel de Rol (8 cols) + Feed Colaborativo OrbitDB (4 cols) */}
       <main className="mx-auto flex-1 w-full max-w-7xl px-4 py-6 sm:px-6">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-8">
@@ -99,6 +97,7 @@ export function App() {
                 onCreatePayment={createPayment}
                 onOpenFundModal={(p) => setFundTarget(p)}
                 onOpenSplitModal={(p) => setSplitTarget(p)}
+                onToggleDispute={toggleDisputePayment}
                 onOpenNftModal={(p) => setNftTarget(p)}
                 onSelectPaymentForOrbit={(id) => setOrbitFilterId(id)}
               />
@@ -115,7 +114,6 @@ export function App() {
             )}
           </div>
 
-          {/* Columna Lateral P2P OrbitDB EventLog */}
           <div className="lg:col-span-4">
             <OrbitTimeline
               account={account}
@@ -128,7 +126,6 @@ export function App() {
         </div>
       </main>
 
-      {/* Modales Interactivos */}
       <FundPaymentModal
         payment={fundTarget}
         onClose={() => setFundTarget(null)}

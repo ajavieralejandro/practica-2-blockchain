@@ -18,14 +18,13 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
 
   const totalEthNum = parseFloat(payment.amountEth) || 0;
   const [splitEth, setSplitEth] = useState<string>(payment.amountEth);
-  const [deliverableCid, setDeliverableCid] = useState<string>(
+  const [deliverableCid] = useState<string>(
     payment.deliverableCID || payment.agreementCID
   );
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   const parsedSplit = parseFloat(splitEth) || 0;
   const remainingEth = Math.max(0, totalEthNum - parsedSplit);
-  const isFullApproval = Math.abs(parsedSplit - totalEthNum) < 1e-9;
 
   const applyPreset = (ratio: number) => {
     const val = (totalEthNum * ratio).toFixed(4).replace(/\.?0+$/, '');
@@ -34,10 +33,10 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (parsedSplit <= 0 || parsedSplit > totalEthNum || !deliverableCid.trim()) return;
+    if (parsedSplit <= 0 || parsedSplit > totalEthNum) return;
     setSubmitting(true);
     try {
-      await onConfirmSplit(payment.id, splitEth, deliverableCid.trim());
+      await onConfirmSplit(payment.id, splitEth, deliverableCid);
       onClose();
     } finally {
       setSubmitting(false);
@@ -47,7 +46,6 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
-        {/* Cabecera */}
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
@@ -58,7 +56,7 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
                 Aprobar Hito y Dividir Pago (splitAndApproveMilestone)
               </h3>
               <p className="font-mono text-xs text-slate-400">
-                Token ERC-721 {payment.shortId} · Saldo Total: {payment.amountEth} ETH
+                Token ERC-721 {payment.shortId} · Saldo Restante: {payment.amountEth} ETH
               </p>
             </div>
           </div>
@@ -71,14 +69,12 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
           </button>
         </div>
 
-        {/* Formulario */}
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
-          {/* Revisión del entregable IPFS */}
           <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
                 <FileCode2 className="h-3.5 w-3.5 text-sky-400" />
-                Entregable del Proveedor (_deliverableCID)
+                Entregable del Proveedor (deliverableCID en contrato)
               </span>
               {deliverableCid && (
                 <a
@@ -92,27 +88,21 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
                 </a>
               )}
             </div>
-            <input
-              type="text"
-              required
-              value={deliverableCid}
-              onChange={(e) => setDeliverableCid(e.target.value)}
-              placeholder="Qm..."
-              className="mt-2 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
-            />
+            <div className="mt-2 truncate rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-300">
+              {payment.deliverableCID || 'Sin deliverableCID adjunto en el contrato'}
+            </div>
           </div>
 
-          {/* Selección de monto a liberar / recortar */}
           <div>
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                Monto a aprobar y liberar inmediatamente (_amount en ETH)
+                Monto a recortar y pagar (msg.value en ETH)
               </label>
               <div className="flex items-center gap-1">
                 {[
                   { label: '25%', ratio: 0.25 },
+                  { label: '40%', ratio: 0.4 },
                   { label: '50%', ratio: 0.5 },
-                  { label: '75%', ratio: 0.75 },
                   { label: '100% Total', ratio: 1 },
                 ].map((preset) => (
                   <button
@@ -142,32 +132,32 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
                 ETH
               </span>
             </div>
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              El contrato <code className="font-mono text-emerald-400">splitAndApproveMilestone(_paymentId)</code> es{' '}
+              <code className="font-mono text-emerald-400">payable</code>: usa <code className="font-mono">msg.value</code> para recortar el sub-pago, fondearlo con <code className="font-mono">pay(newId)</code> y marcarlo como <code className="font-mono">approved = true</code>.
+            </p>
           </div>
 
-          {/* Previsualización de partición on-chain */}
           <div className="grid grid-cols-3 items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/90 p-3 text-center">
             <div>
-              <div className="text-[11px] text-slate-400">Sub-Pago Aprobado</div>
+              <div className="text-[11px] text-slate-400">Nuevo Hito (newId)</div>
               <div className="font-mono text-sm font-bold text-emerald-400">
                 {parsedSplit.toFixed(4).replace(/\.?0+$/, '') || '0'} ETH
               </div>
-              <div className="text-[10px] text-emerald-500">Liberación Inmediata</div>
+              <div className="text-[10px] text-emerald-500">Fondeado &amp; Aprobado</div>
             </div>
             <div className="flex justify-center text-slate-600">
               <ArrowRight className="h-4 w-4" />
             </div>
             <div>
-              <div className="text-[11px] text-slate-400">Restante en Escrow</div>
+              <div className="text-[11px] text-slate-400">Restante en Principal</div>
               <div className="font-mono text-sm font-bold text-slate-200">
                 {remainingEth.toFixed(4).replace(/\.?0+$/, '') || '0'} ETH
               </div>
-              <div className="text-[10px] text-slate-400">
-                {isFullApproval ? 'Se aprueba token original' : 'Continúa en principal'}
-              </div>
+              <div className="text-[10px] text-slate-400">deliverableCID se limpia</div>
             </div>
           </div>
 
-          {/* Botones de acción */}
           <div className="flex items-center justify-end gap-2.5 pt-2">
             <button
               type="button"
@@ -185,9 +175,7 @@ export const SplitApproveModal: React.FC<SplitApproveModalProps> = ({
               <span>
                 {submitting
                   ? 'Firmando en MetaMask...'
-                  : isFullApproval
-                  ? 'Aprobar 100% del Hito'
-                  : 'Dividir y Aprobar Sub-Pago'}
+                  : `Dividir y Pagar Hito (${splitEth} ETH)`}
               </span>
             </button>
           </div>

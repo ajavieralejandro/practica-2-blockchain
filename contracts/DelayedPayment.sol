@@ -1,80 +1,80 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+//SPDX-License-Identifier: MIT
+pragma solidity ^0.8.34;
 
-import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
+import {ERC721,IERC721Errors} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+
+/*
+    @dev error interface for DelayPayment contract.
+*/
 interface PaymentErrors {
+
+    //Payments should not be overpayed
     error OverpaymentError(uint256 amount, uint256 owed);
+
+    //Payments that can't yet be reclaimed
     error UnmaturedPayment(uint256 dueTime);
+
+    //Payments that can be claimed but remain unpayed
     error Unpayed(uint256 paymentId);
+
+    //Payment that has already been payed
     error Payed(uint256 paymentId);
+
+    //A slash debtor can't generate new Payments until it pays it's own debts
     error SlashedDebtor(address _debtor);
+
+    //Someone that hasn't the right to claim a payment can't do certain actions
     error NotBeneficiary(address caller, uint256 paymentId);
+
     error NotYourDebt(address caller, uint256 paymentId);
+
+    error DeliverableMissing(uint256 paymentId);
+
+    error NotApproved(uint256 paymentId);
+
+    error DeliverableFound(uint256 paymentId, string deliverableCID);
+
+    error DisputedPayment(uint256 paymentId);
+
     error NotInTime();
-    error InvalidAgreementCID();
-    error InvalidDeliverableCID();
 }
 
-/**
- * @title DelayedPayment (v2 - IPFS & Milestone Escrow Edition)
- * @notice Contrato ERC721 de pagos diferidos y escrow por hitos con soporte nativo para CIDs de IPFS
- *         (Acuerdos de servicio y Entregables verificables).
- */
-contract DelayedPayment is ERC721 {
+contract DelayPayment is ERC721 {
+
     struct Payment {
         address beneficiary;
-        address debtor;
         uint256 amount;
         uint256 payed;
         uint48 dueTime;
-        bool approved;
+
+        //IPFS variables
         string agreementCID;
         string deliverableCID;
+
+        bool approved;
+        bool disputed;
     }
 
-    event NewPayment(
-        address indexed _beneficiary,
-        address indexed _debtor,
-        uint256 indexed _id,
-        uint256 _amount,
-        uint256 _dueTime,
-        string _agreementCID
-    );
-    event DeliverableSubmitted(
-        uint256 indexed _paymentId,
-        address indexed _beneficiary,
-        string _deliverableCID
-    );
-    event MilestoneApproved(
-        uint256 indexed _paymentId,
-        uint256 indexed _approvedPaymentId,
-        uint256 _amount,
-        string _deliverableCID
-    );
-    event SplitPayment(
-        uint256 indexed _paymentId,
-        uint256 indexed _splittedId,
-        address indexed _debtor,
-        uint256 _amount
-    );
-    event PaymentClaimed(
-        uint256 indexed _paymentId,
-        address indexed _beneficiary,
-        uint256 _amount
-    );
-    event SlashedPayer(address indexed _payer, uint256 indexed _id);
+    event NewPayment(address _beneficiary, address _debtor, uint256 indexed _id);
+    event SlashedPayer(address _payer, uint256 indexed _id);
+    event SplitPayment(uint256 indexed _paymentId, uint256 indexed _splittedId, address _debtor);
+    event DeliverableSubmitted(uint256 indexed _paymentId, string deliverableCID);
+    event MilestoneApproved(uint256 indexed originalPaymentId, uint256 indexed milestonePaymentId, uint256 amount, string deliverableCID);
+    event DisputedPayment(uint256 indexed paymentId, address beneficiary);
 
     mapping(uint256 => Payment) public payments;
-    mapping(address => uint256) public slashed;
+    mapping(address => uint256 slashedPayments) public slashed;
 
-    uint256 private _counter;
-    uint256[] private _allPaymentIds;
+    //Used to generate unique IDs for the different payments
+    uint256 private counter;
 
     constructor() ERC721("DelayedPayments", "DPA") payable {
-        _counter = 0;
+        counter = 0;
     }
-
+    /*
+        @dev checks that _debtor has no unpayed debts.
+    */
     modifier unslashed(address _debtor) {
         if (slashed[_debtor] > 0) {
             revert PaymentErrors.SlashedDebtor(_debtor);
@@ -82,189 +82,191 @@ contract DelayedPayment is ERC721 {
         _;
     }
 
-    function _baseURI() internal pure override returns (string memory) {
-        return "ipfs://";
+    /*
+        @dev checks that _beneficiary is the receiver of the payment
+    */
+    modifier isBeneficiary(address _ben, uint256 _paymentId) {
+        //Check that the payment exists
+        ownerOf(_paymentId);
+        if (payments[_paymentId].beneficiary != _ben) {
+            revert PaymentErrors.NotBeneficiary(_ben,_paymentId);
+        }
+        _;
     }
 
-    /**
-     * @notice Devuelve la URI del token ERC721 priorizando el entregable certificado o el acuerdo inicial en IPFS.
-     */
-    function tokenURI(uint256 tokenId) public view override returns (string memory) {
-        _requireOwned(tokenId);
-        Payment memory p = payments[tokenId];
-        string memory cid = bytes(p.deliverableCID).length > 0 ? p.deliverableCID : p.agreementCID;
-        return string(abi.encodePacked(_baseURI(), cid));
+    function tokenURI(uint256 _paymentID) override public view returns(string memory) {
+        ownerOf(_paymentID);
+        return string.concat("ipfs://", payments[_paymentID].agreementCID);
     }
 
-    /**
-     * @notice Permite al Cliente (debtor) crear un pago asegurado en escrow adjuntando el CID del acuerdo en IPFS
-     *         y opcionalmente fondeándolo en la misma transacción (msg.value).
-     */
-    function createPayment(
-        uint256 _dueTime,
-        uint256 _amount,
-        address _beneficiary,
-        string calldata _agreementCID
-    ) public payable unslashed(msg.sender) returns (uint256 id) {
-        if (block.timestamp > _dueTime) {
+    /*
+        @dev creates a payment and emits a NewPayment event
+        The Payment is initialized without any CID for an agreement or a deliverable
+        and its approval is set to false
+    */
+    function _createPayment(address _debtor, uint256 _dueTime, uint256 _amount, address _beneficiary, string memory _agreementCID) private unslashed(_debtor) returns(uint256 id) {
+        if(block.timestamp>_dueTime){
             revert PaymentErrors.NotInTime();
         }
-        if (bytes(_agreementCID).length == 0) {
-            revert PaymentErrors.InvalidAgreementCID();
-        }
-        if (msg.value > _amount) {
-            revert PaymentErrors.OverpaymentError(msg.value, _amount);
-        }
-
-        uint256 _id = uint256(keccak256(abi.encodePacked(msg.sender, _counter, block.timestamp)));
-        _counter += 1;
-
-        payments[_id] = Payment({
+        uint256 _id = uint256(keccak256(abi.encodePacked(msg.sender, counter)));
+        payments[_id] = Payment(
+            {
             beneficiary: _beneficiary,
-            debtor: msg.sender,
             amount: _amount,
-            payed: msg.value,
             dueTime: uint48(_dueTime),
-            approved: false,
+            payed: 0,
             agreementCID: _agreementCID,
-            deliverableCID: ""
-        });
-
-        _allPaymentIds.push(_id);
+            deliverableCID: "",
+            approved: false,
+            disputed: false
+            });
+        counter += 1;
+        emit NewPayment(_beneficiary, msg.sender, _id);
         _safeMint(msg.sender, _id);
-
-        emit NewPayment(_beneficiary, msg.sender, _id, _amount, _dueTime, _agreementCID);
         return _id;
     }
 
-    /**
-     * @notice Permite fondear adicionalmente un pago existente en escrow.
-     */
-    function pay(uint256 _paymentId) public payable {
-        address _owner = ownerOf(_paymentId);
-        Payment storage payment = payments[_paymentId];
-        if (msg.sender != _owner && msg.sender != payment.debtor) {
-            revert PaymentErrors.NotYourDebt(msg.sender, _paymentId);
-        }
-        if (msg.value > (payment.amount - payment.payed)) {
-            revert PaymentErrors.OverpaymentError(msg.value, payment.amount - payment.payed);
-        }
-        payment.payed += msg.value;
+    /*
+        @dev creates a new payment by minting a new ERC721 token
+
+        - Arguments:
+            - _dueTime represents the timestamp after which the payment can be reclaimed
+            - _amount represents the total Wei that should be payed by the creator of the payment
+            - _beneficiary represents the address that will be able to reclaim the payment
+        - Requirements:
+            - The address creating the payment must have no slashed payments
+    */
+    function createPayment(uint256 _dueTime, uint256 _amount, address _beneficiary, string calldata _agreementCID) public returns(uint256 id) {
+        return _createPayment(msg.sender, _dueTime, _amount, _beneficiary, _agreementCID);
     }
 
-    /**
-     * @notice Permite al Proveedor (beneficiary) subir y registrar el comprobante/entregable del hito en IPFS.
-     */
-    function submitDeliverable(uint256 _paymentId, string calldata _deliverableCID) public {
-        ownerOf(_paymentId);
-        Payment storage payment = payments[_paymentId];
-        if (msg.sender != payment.beneficiary) {
-            revert PaymentErrors.NotBeneficiary(msg.sender, _paymentId);
-        }
-        if (bytes(_deliverableCID).length == 0) {
-            revert PaymentErrors.InvalidDeliverableCID();
-        }
+    /*
+        @dev reduces the amount owed to Payment[_paymentId] and creates a new
+        payment with the given amount.
+        Only payments with a deliverable been approved can be splitted
 
-        payment.deliverableCID = _deliverableCID;
-        emit DeliverableSubmitted(_paymentId, msg.sender, _deliverableCID);
-    }
-
-    /**
-     * @notice Permite al Cliente revisar el entregable, recortar un sub-pago aprobado (o aprobar el total)
-     *         para liberación inmediata y marcar el token como aprobado.
-     */
-    function splitAndApproveMilestone(
-        uint256 _paymentId,
-        uint256 _amount,
-        string calldata _deliverableCID
-    ) public returns (uint256 approvedPaymentId) {
+        - Arguments
+            - _paymentId is the Id of the payment to be splited
+            - _amount is the amount to be used to create a new payment
+    */
+    function _splitPayment(uint256 _paymentId, uint256 _amount) internal returns(uint256) {
         address _owner = ownerOf(_paymentId);
-        Payment storage original = payments[_paymentId];
-
-        if (msg.sender != _owner && msg.sender != original.debtor) {
-            revert PaymentErrors.NotYourDebt(msg.sender, _paymentId);
+        Payment storage _original = payments[_paymentId];
+        if (_original.disputed) {
+            revert PaymentErrors.DisputedPayment(_paymentId);
         }
-        if (_amount == 0 || _amount > original.amount) {
-            revert PaymentErrors.OverpaymentError(_amount, original.amount);
+        if (_amount > _original.amount) {
+            revert PaymentErrors.OverpaymentError(_amount, _original.amount);
         }
-
-        string memory finalDeliverable = bytes(_deliverableCID).length > 0
-            ? _deliverableCID
-            : original.deliverableCID;
-
-        // Si aprueba el 100% del monto restante, aprueba directamente el token actual para liberación inmediata
-        if (_amount == original.amount) {
-            original.deliverableCID = finalDeliverable;
-            original.approved = true;
-            emit MilestoneApproved(_paymentId, _paymentId, _amount, finalDeliverable);
-            return _paymentId;
-        }
-
-        // Si recorta un sub-pago parcial (hito), descuenta del principal y acuña un nuevo token aprobado
-        uint256 fundedPortion = 0;
-        if (original.payed >= _amount) {
-            fundedPortion = _amount;
-            original.payed -= _amount;
-        } else {
-            fundedPortion = original.payed;
-            original.payed = 0;
-        }
-        original.amount -= _amount;
-
-        uint256 newId = uint256(keccak256(abi.encodePacked(msg.sender, _counter, block.timestamp)));
-        _counter += 1;
-
-        payments[newId] = Payment({
-            beneficiary: original.beneficiary,
-            debtor: original.debtor,
-            amount: _amount,
-            payed: fundedPortion,
-            dueTime: uint48(block.timestamp), // Liberación inmediata habilitada
-            approved: true,
-            agreementCID: original.agreementCID,
-            deliverableCID: finalDeliverable
-        });
-
-        _allPaymentIds.push(newId);
-        _safeMint(_owner, newId);
-
-        emit SplitPayment(_paymentId, newId, _owner, _amount);
-        emit MilestoneApproved(_paymentId, newId, _amount, finalDeliverable);
+        uint256 newId = _createPayment(_owner, _original.dueTime, _amount, _original.beneficiary, _original.agreementCID);
+        _original.amount = _original.amount - _amount;
         return newId;
     }
 
-    /**
-     * @notice Permite al Proveedor reclamar fondos cuando el hito está aprobado o ha vencido el plazo.
-     */
+
+    /*
+        @dev pays one payment with another
+
+        - Arguments:
+            - _withId is the Id of the payment to be used to cancel _paymentId
+            - _paymentId is the ID of the payment to be payed
+
+        - Requirements:
+            - Payment[_withId].dueTime <= Payment[_paymentId].dueTime
+            - Payment[_withId].amount >= Payment[_paymentId].amount
+            - msg.sender must be the beneficiary of Payment[_withId]
+            - msg.sender must be the owner of Payment[_paymentId]
+    */
+    function payWithPayment(uint256 _withId, uint256 _paymentId) public {
+        address _owner = ownerOf(_paymentId);
+        ownerOf(_withId);
+        Payment storage _payment = payments[_paymentId];
+        Payment memory _original = payments[_withId];
+        if (msg.sender != _original.beneficiary) {
+            revert PaymentErrors.NotBeneficiary(msg.sender, _withId);
+        }
+        if (_original.approved) {
+            _splitPayment(_withId, _payment.amount);
+            _burn(_paymentId);
+            if (slashed[msg.sender] > 0) {
+                slashed[msg.sender] -= 1;
+            }
+            return;
+        }
+        revert PaymentErrors.NotApproved(_paymentId);
+    }
+
+    /*
+        @dev pays an amount to a given payment
+
+        - Arguments
+            - _paymentId is the payment into which the funds will be poured
+            - msg.value will be used as the payed amount
+
+        - Requirements
+            - amount payed must be <= than Payment.amount-Payment.payed
+            - _paymentId must exist
+
+    */
+    function pay(uint256 _paymentId) public payable {
+        address _owner = ownerOf(_paymentId);
+        if (_owner != msg.sender) {
+            revert PaymentErrors.NotYourDebt(msg.sender,_paymentId);
+        }
+        Payment storage payment = payments[_paymentId];
+        if (msg.value > (payment.amount - payment.payed)) {
+            revert PaymentErrors.OverpaymentError(msg.value, payment.amount - payment.payed);
+        }
+
+        payment.payed = payment.payed + msg.value;
+    }
+
+
+    /*
+        @dev reclaims a payment in full
+
+        - Arguments
+            - _paymentId is the payment to be reclaimed
+
+        - Requirements
+            - Payments[_paymentId] should have been payed
+            - Payment.beneficiary must be equal msg.sender
+            - _amount must be <= to Payment.payed
+    */
     function claim(uint256 _paymentId) public {
         address _owner = ownerOf(_paymentId);
         Payment memory payment = payments[_paymentId];
-
         if (payment.beneficiary != msg.sender) {
             revert PaymentErrors.NotBeneficiary(msg.sender, _paymentId);
-        }
-        if (!payment.approved && payment.dueTime > block.timestamp) {
-            revert PaymentErrors.UnmaturedPayment(payment.dueTime);
         }
         if (payment.payed < payment.amount) {
             revert PaymentErrors.Unpayed(_paymentId);
         }
-
-        _burn(_paymentId);
-
-        (bool success, ) = msg.sender.call{value: payment.amount}("");
-        require(success, "ETH transfer failed");
-
-        if (slashed[_owner] > 0) {
-            slashed[_owner] -= 1;
+        if (payment.disputed) {
+            revert PaymentErrors.DisputedPayment(_paymentId);
         }
-
-        emit PaymentClaimed(_paymentId, msg.sender, payment.amount);
+        bool delivered = bytes(payment.deliverableCID).length > 0;
+        if (payment.approved || (payment.dueTime <= block.timestamp && delivered)) {
+            _burn(_paymentId);
+            (bool success, ) = msg.sender.call{value: payment.amount}("");
+            require(success);
+            if (slashed[_owner] > 0) {
+                slashed[_owner] -= 1;
+            }
+            return;
+        }
+        if (payment.dueTime > block.timestamp) {
+            revert PaymentErrors.UnmaturedPayment(payment.dueTime);
+        }
+        revert PaymentErrors.DeliverableMissing(_paymentId);
     }
 
-    /**
-     * @notice Penaliza al deudor si un pago venció sin estar fondeado al 100%.
-     */
+    /*
+        @dev slashes the owner of a payment that was due but remained unpaid
+
+        - Requirements
+            - _paymentId must be past due and unpayed
+    */
     function slashPayer(uint256 _paymentId) public {
         address _owner = ownerOf(_paymentId);
         Payment memory _payment = payments[_paymentId];
@@ -274,14 +276,91 @@ contract DelayedPayment is ERC721 {
         if (_payment.dueTime >= block.timestamp) {
             revert PaymentErrors.UnmaturedPayment(_payment.dueTime);
         }
+        if (_payment.disputed) {
+            revert PaymentErrors.DisputedPayment(_paymentId);
+        }
+        bool undelivered = bytes(_payment.deliverableCID).length == 0;
+        if (undelivered) {
+            revert PaymentErrors.DeliverableMissing(_paymentId);
+        }
         slashed[_owner] += 1;
         emit SlashedPayer(_owner, _paymentId);
     }
 
-    /**
-     * @notice Devuelve todos los IDs de pagos registrados para facilitar la indexación en el frontend.
-     */
-    function getAllPaymentIds() external view returns (uint256[] memory) {
-        return _allPaymentIds;
+    /*
+        @dev override of ERC721 _update method. Calls the original _update for creating
+        and modifying payments when it is not a transfer.
+        Transfering a payment means transfering the rights to claim it later.
+    */
+    function _update(address _to, uint256 _paymentId, address _auth) internal override returns(address addr) {
+        address owner = _ownerOf(_paymentId);
+        if (owner == address(0)) {
+            return super._update(_to, _paymentId, _auth);
+        }
+        if (_to != address(0)) {
+            //Modification of beneficiary
+            Payment storage payment = payments[_paymentId];
+            if (msg.sender != payment.beneficiary) {
+                revert PaymentErrors.NotBeneficiary(msg.sender, _paymentId);
+            }
+            payments[_paymentId].beneficiary = _to;
+            return _to;
+        }
+        return super._update(_to, _paymentId, _auth);
+    }
+
+
+    /*
+        @dev submits a deliverable to a Payment, setting the corresponding Payment.deliverableCID field
+    */
+    function submitDeliverable(uint256 _paymentId, string calldata _deliverableCID) external isBeneficiary(msg.sender, _paymentId) {
+        payments[_paymentId].deliverableCID = _deliverableCID;
+        emit DeliverableSubmitted(_paymentId, _deliverableCID);
+    }
+
+    /*
+        @dev the debtor of a payment approves a deliverable and aplits the payment for the given amount in an approved
+        fashion. The amount is passed as the payment given by the debtor
+    */
+    function splitAndApproveMilestone(uint256 _paymentId) external payable {
+        if (msg.sender != ownerOf(_paymentId)) {
+            revert PaymentErrors.NotYourDebt(msg.sender, _paymentId);
+        }
+        Payment storage payment = payments[_paymentId];
+        uint256 newId = _splitPayment(_paymentId, msg.value);
+        pay(newId);
+        Payment storage newPayment = payments[newId];
+        newPayment.approved = true;
+        newPayment.deliverableCID = payment.deliverableCID;
+        payment.deliverableCID = "";
+        emit MilestoneApproved(_paymentId, newId, msg.value, newPayment.deliverableCID);
+    }
+
+    /*
+        @dev the debtor can dispute a Payment that has a deliverable in order to stop the payment from happening
+        a payment may only be disputted if the debtor fully pays it before disputting it
+    */
+    function disputePayment(uint256 _paymentId) external {
+        address owner = ownerOf(_paymentId);
+        if (owner != msg.sender) {
+            revert PaymentErrors.NotYourDebt(msg.sender,_paymentId);
+        }
+        Payment memory payment = payments[_paymentId];
+        if (payment.payed < payment.amount) {
+            revert PaymentErrors.Unpayed(_paymentId);
+        }
+        payments[_paymentId].disputed = true;
+        emit DisputedPayment(_paymentId, payment.beneficiary);
+    }
+
+    /*
+        @dev reverts the payment dispute status to undisputed
+    */
+    function undisputePayment(uint256 _paymentId) external {
+        address owner = ownerOf(_paymentId);
+        if (owner != msg.sender) {
+            revert PaymentErrors.NotYourDebt(msg.sender,_paymentId);
+        }
+        payments[_paymentId].disputed = false;
     }
 }
