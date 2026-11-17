@@ -1,5 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
+
+const eventsPolyfillPath = path.resolve(__dirname, 'src/polyfills/events.ts');
 
 export default defineConfig({
   plugins: [react()],
@@ -9,6 +12,9 @@ export default defineConfig({
   resolve: {
     alias: {
       buffer: 'buffer',
+      'node:buffer': 'buffer',
+      events: eventsPolyfillPath,
+      'node:events': eventsPolyfillPath,
     },
   },
   server: {
