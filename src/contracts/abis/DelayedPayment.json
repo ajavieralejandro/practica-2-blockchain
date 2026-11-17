@@ -1,0 +1,237 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "createPayment",
+    "inputs": [
+      { "name": "_dueTime", "type": "uint256", "internalType": "uint256" },
+      { "name": "_amount", "type": "uint256", "internalType": "uint256" },
+      { "name": "_beneficiary", "type": "address", "internalType": "address" },
+      { "name": "_agreementCID", "type": "string", "internalType": "string" }
+    ],
+    "outputs": [{ "name": "id", "type": "uint256", "internalType": "uint256" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pay",
+    "inputs": [
+      { "name": "_paymentId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "submitDeliverable",
+    "inputs": [
+      { "name": "_paymentId", "type": "uint256", "internalType": "uint256" },
+      { "name": "_deliverableCID", "type": "string", "internalType": "string" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "splitAndApproveMilestone",
+    "inputs": [
+      { "name": "_paymentId", "type": "uint256", "internalType": "uint256" },
+      { "name": "_amount", "type": "uint256", "internalType": "uint256" },
+      { "name": "_deliverableCID", "type": "string", "internalType": "string" }
+    ],
+    "outputs": [
+      { "name": "milestonePaymentId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claim",
+    "inputs": [
+      { "name": "_paymentId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "slashPayer",
+    "inputs": [
+      { "name": "_paymentId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "payWithPayment",
+    "inputs": [
+      { "name": "_withId", "type": "uint256", "internalType": "uint256" },
+      { "name": "_paymentId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "payments",
+    "inputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [
+      { "name": "beneficiary", "type": "address", "internalType": "address" },
+      { "name": "amount", "type": "uint256", "internalType": "uint256" },
+      { "name": "payed", "type": "uint256", "internalType": "uint256" },
+      { "name": "dueTime", "type": "uint48", "internalType": "uint48" },
+      { "name": "agreementCID", "type": "string", "internalType": "string" },
+      { "name": "deliverableCID", "type": "string", "internalType": "string" },
+      { "name": "approved", "type": "bool", "internalType": "bool" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "slashed",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "slashedPayments", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ownerOf",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tokenURI",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256", "internalType": "uint256" }
+    ],
+    "outputs": [
+      { "name": "", "type": "string", "internalType": "string" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "NewPayment",
+    "inputs": [
+      { "name": "_beneficiary", "type": "address", "indexed": false, "internalType": "address" },
+      { "name": "_debtor", "type": "address", "indexed": false, "internalType": "address" },
+      { "name": "_id", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DeliverableSubmitted",
+    "inputs": [
+      { "name": "paymentId", "type": "uint256", "indexed": true, "internalType": "uint256" },
+      { "name": "deliverableCID", "type": "string", "indexed": false, "internalType": "string" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MilestoneApproved",
+    "inputs": [
+      { "name": "originalPaymentId", "type": "uint256", "indexed": true, "internalType": "uint256" },
+      { "name": "milestonePaymentId", "type": "uint256", "indexed": true, "internalType": "uint256" },
+      { "name": "amount", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "deliverableCID", "type": "string", "indexed": false, "internalType": "string" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SplitPayment",
+    "inputs": [
+      { "name": "_paymentId", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_splittedId", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_debtor", "type": "address", "indexed": false, "internalType": "address" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SlashedPayer",
+    "inputs": [
+      { "name": "_payer", "type": "address", "indexed": false, "internalType": "address" },
+      { "name": "_id", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DeliverableMissing",
+    "inputs": [{ "name": "paymentId", "type": "uint256", "internalType": "uint256" }]
+  },
+  {
+    "type": "error",
+    "name": "NotApprovedOrMatured",
+    "inputs": [{ "name": "paymentId", "type": "uint256", "internalType": "uint256" }]
+  },
+  {
+    "type": "error",
+    "name": "OverpaymentError",
+    "inputs": [
+      { "name": "amount", "type": "uint256", "internalType": "uint256" },
+      { "name": "owed", "type": "uint256", "internalType": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnmaturedPayment",
+    "inputs": [{ "name": "dueTime", "type": "uint256", "internalType": "uint256" }]
+  },
+  {
+    "type": "error",
+    "name": "Unpayed",
+    "inputs": [{ "name": "paymentId", "type": "uint256", "internalType": "uint256" }]
+  },
+  {
+    "type": "error",
+    "name": "Payed",
+    "inputs": [{ "name": "paymentId", "type": "uint256", "internalType": "uint256" }]
+  },
+  {
+    "type": "error",
+    "name": "SlashedDebtor",
+    "inputs": [{ "name": "_debtor", "type": "address", "internalType": "address" }]
+  },
+  {
+    "type": "error",
+    "name": "NotBeneficiary",
+    "inputs": [
+      { "name": "caller", "type": "address", "internalType": "address" },
+      { "name": "paymentId", "type": "uint256", "internalType": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotYourDebt",
+    "inputs": [
+      { "name": "caller", "type": "address", "internalType": "address" },
+      { "name": "paymentId", "type": "uint256", "internalType": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotInTime",
+    "inputs": []
+  }
+]
